@@ -1,0 +1,41 @@
+# Entornos virtuales de Python
+venv/
+/venv/
+*.venv
+
+# Archivos de credenciales y configuración local
+.env
+*.env
+env/
+
+# Caché y archivos compilados de Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Archivos de registro y logs
+logs/
+*.log
+
+# Artefactos de construcción y distribución
+build/
+dist/
+*.egg-info/
+
+# Archivos de configuración de IDEs
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Archivos del sistema operativo
+.DS_Store
+Thumbs.db
+
+# Datos grandes (opcional, considera usar Git LFS para ellos)
+# data/raw/
+# data/clean/
