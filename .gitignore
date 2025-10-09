@@ -38,4 +38,10 @@ Thumbs.db
 
 # Datos grandes (opcional, considera usar Git LFS para ellos)
 # data/raw/
+
 # data/clean/
+datos_limpios/embeddings.pt
+datos_limpios/id_counter.json
+datos_limpios/sitios_cali_maestro.csv
+datos_limpios/sitios_cali_maestro.json
+datos_limpios/visitantes_cali_listo_para_modelo.csv
