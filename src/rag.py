@@ -10,6 +10,9 @@ import torch
 from sentence_transformers import SentenceTransformer, util
 import google.generativeai as genai
 
+# --- NUEVO: Importar evaluador PDF ---
+from evaluador_modelo_pdf import evaluar_y_guardar
+
 # ========================================================
 # [1] Configuración Inicial
 # ========================================================
@@ -23,7 +26,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(log_file),
+        logging.FileHandler(log_file, encoding='utf-8'),
         logging.StreamHandler()
     ]
 )
@@ -186,14 +189,35 @@ Opiniones: {sitio['comentarios'][:400]}...
         return fallback_text
 
 # ========================================================
-# [8] Ejecución del flujo completo RAG
+# [8] Ejecución del flujo completo RAG + Evaluación PDF
 # ========================================================
 def ejecutar_rag(query: str, top_k: int = 3, usuario_info: dict = None):
     """
     Ejecuta el flujo completo del RAG:
     1. Recupera contexto desde MongoDB
     2. Genera respuesta con Gemini 2.5-FLASH
+    3. Evalúa Precision, Recall, Similitud semántica, BLEU y ROUGE-L
+       y guarda todos los resultados en un PDF acumulativo.
     """
+    # --- Recuperar contexto ---
     contexto = buscar_sitios_relevantes(query, top_k)
+    
+    # --- Generar respuesta con Gemini ---
     respuesta = generar_respuesta_con_gemini(query, contexto, usuario_info)
+
+    # --- Evaluación ---
+    respuesta_esperada = "El sistema recomienda lugares turísticos relevantes según tu búsqueda."
+    precision, recall, similitud, bleu, rouge_l = evaluar_y_guardar(
+        query,
+        contexto,
+        respuesta,
+        respuesta_esperada
+    )
+
+    # --- Logging de métricas ---
+    logging.info(
+        f"📊 Evaluación guardada: Precision={precision:.2f}, Recall={recall:.2f}, "
+        f"Similaridad={similitud:.2f}, BLEU={bleu:.2f}, ROUGE-L={rouge_l:.2f}"
+    )
+
     return {"contexto": contexto, "respuesta": respuesta}
