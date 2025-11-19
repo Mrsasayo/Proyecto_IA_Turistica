@@ -16,10 +16,14 @@ streamlit-folium==0.11.1
 matplotlib==3.8.1
 seaborn==0.12.2
 pandas==2.2.3
-numpy==1.26.0
+numpy==1.25.2
 
 # Google Gemini API
 google-generativeai==0.4.0
+
+# Traducción e idioma
+langdetect==1.0.9
+googletrans==4.0.0-rc1
 
 # Utilidades
 tqdm==4.66.1
