@@ -41,6 +41,7 @@ from filtrado_conocimiento import filtrar_por_usuario
 from recomendador_hibrido import ranking_final
 from clustering import cargar_datos_usuarios, entrenar_clustering, predecir_perfil
 from rag import ejecutar_rag
+from evaluador_modelo_pdf import evaluar_rag_completo_v2
 
 # -------------------- CONFIG -------------------------------------------------
 st.set_page_config(
@@ -197,8 +198,16 @@ def detectar_idioma(texto):
         return detect(texto)
     except Exception:
         return "desconocido"
-
+    
 def procesar_mensaje_usuario(user_text):
+    """
+    Procesa el mensaje del usuario:
+    - Detecta idioma
+    - Extrae presupuesto, tiempo e intereses
+    - Filtra y puntúa sitios turísticos
+    - Genera recomendación con RAG
+    - Evalúa automáticamente la respuesta del RAG usando los sitios rankeados
+    """ 
     idioma = detectar_idioma(user_text)
     presupuesto, tiempo_disponible, intereses = 100, 8, []
     user_text_low = user_text.lower()
@@ -236,13 +245,36 @@ def procesar_mensaje_usuario(user_text):
     try:
         resultado_rag = ejecutar_rag(query_text, top_k=5)
         recomendacion_rag = resultado_rag.get("respuesta", "")
+
+        # ---------------- EVALUACIÓN AUTOMÁTICA DEL MODELO ----------------
+        resultados_recuperados = [s.get("nombre_google", s.get("nombre")) for s in sitios_ranked]
+        # Se asume que todos los sitios rankeados son "relevantes"
+        documentos_relevantes = resultados_recuperados.copy()
+        # Se usa la misma recomendación como "respuesta_modelo"
+        metrics = evaluar_rag_completo_v2(
+            query=query_text,
+            resultados_recuperados=resultados_recuperados,
+            documentos_relevantes=documentos_relevantes,
+            respuesta_modelo=recomendacion_rag,
+            respuesta_esperada=contexto,  # contexto generado a partir de los sitios
+            k=len(resultados_recuperados)
+        )
     except Exception:
         recomendacion_rag = "⚠️ No se pudo generar la respuesta del modelo."
+        metrics = None
 
     ORIGEN = [3.437, -76.529]
-    resultado = {"perfil": perfil, "sitios_ranked": sitios_ranked, "recomendacion_rag": recomendacion_rag, "origen": ORIGEN, "idioma_usuario": idioma}
+    resultado = {
+        "perfil": perfil,
+        "sitios_ranked": sitios_ranked,
+        "recomendacion_rag": recomendacion_rag,
+        "origen": ORIGEN,
+        "idioma_usuario": idioma,
+        "metrics": metrics
+    }
     bot_resp = f"¡Listo! He generado recomendaciones basadas en tu consulta ✅ (Idioma detectado: {idioma})"
     return bot_resp, resultado
+
 # -------------------- MAIN LAYOUT (LEFT: sessions, RIGHT: chat) -------------
 col_left, col_right = st.columns([1,3], gap="small")
 

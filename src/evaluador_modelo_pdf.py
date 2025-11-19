@@ -1,12 +1,12 @@
 """
 ========================================================
-EVALUADOR DE MODELO RAG + EXPORTADOR A PDF ACUMULATIVO
+EVALUADOR COMPLETO DE MODELO RAG + EXPORTADOR A PDF
 ========================================================
 Evalúa la respuesta del modelo RAG usando:
-- Precision / Recall: calidad de los documentos recuperados
-- Similitud semántica con la respuesta esperada
-- BLEU / ROUGE: coincidencia literal opcional
-Cada ejecución agrega una página nueva en el PDF.
+- Recuperación: Precision@k, Recall@k, MRR, nDCG
+- Generación: Similitud semántica, ROUGE-L, F1 tokens
+- Métricas combinadas: QA Accuracy, Top-k retrieval + answer correctness
+Cada ejecución agrega una página nueva en el PDF acumulativo.
 ========================================================
 """
 
@@ -14,83 +14,96 @@ import os
 from datetime import datetime
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
-from sentence_transformers import SentenceTransformer, util
 from PyPDF2 import PdfReader, PdfWriter
-from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
+from sentence_transformers import SentenceTransformer, util
 from rouge import Rouge
+from sklearn.metrics import f1_score
 
 # ========================================================
 # Modelo de embeddings
 # ========================================================
 model = SentenceTransformer("paraphrase-multilingual-mpnet-base-v2")
 rouge = Rouge()
-smooth_fn = SmoothingFunction().method1
 
 # ========================================================
-# [1] MÉTRICAS
+# Métricas de recuperación
 # ========================================================
-
-def precision_recall_at_k(resultados, k=3):
-    """
-    Calcula Precision y Recall usando documentos recuperados
-    por embeddings. Por defecto considera todos los documentos como relevantes.
-    """
-    precision = 1.0  # todos los documentos recuperados cuentan
-    recall = min(k, len(resultados)) / len(resultados) if resultados else 0
+def precision_recall_at_k(resultados, relevantes, k=3):
+    top_k = resultados[:k]
+    aciertos = len([doc for doc in top_k if doc in relevantes])
+    precision = aciertos / k if k > 0 else 0
+    recall = aciertos / len(relevantes) if relevantes else 0
     return precision, recall
 
-def evaluar_similitud_respuesta(generada, esperada):
-    """
-    Calcula similitud semántica entre la respuesta del modelo
-    y la respuesta esperada usando embeddings.
-    """
+def mean_reciprocal_rank(resultados, relevantes):
+    for i, doc in enumerate(resultados):
+        if doc in relevantes:
+            return 1 / (i + 1)
+    return 0
+
+def ndcg_at_k(resultados, relevantes, k=5):
+    dcg = 0
+    for i, doc in enumerate(resultados[:k]):
+        if doc in relevantes:
+            dcg += 1 / (i + 1)
+    idcg = sum(1 / (i + 1) for i in range(min(len(relevantes), k)))
+    return dcg / idcg if idcg > 0 else 0
+
+# ========================================================
+# Métricas de generación
+# ========================================================
+def similitud_semantica(generada, esperada):
     gen_emb = model.encode(generada, convert_to_tensor=True)
     exp_emb = model.encode(esperada, convert_to_tensor=True)
     return float(util.cos_sim(gen_emb, exp_emb).item())
 
-def calcular_bleu(respuesta_modelo, respuesta_esperada):
-    """
-    Calcula BLEU score entre la respuesta generada y la esperada.
-    """
-    referencia = [respuesta_esperada.split()]
-    candidato = respuesta_modelo.split()
-    return sentence_bleu(referencia, candidato, smoothing_function=smooth_fn)
-
 def calcular_rouge(respuesta_modelo, respuesta_esperada):
-    """
-    Calcula ROUGE-L F1 entre la respuesta generada y la esperada.
-    """
     scores = rouge.get_scores(respuesta_modelo, respuesta_esperada)
     return scores[0]['rouge-l']['f']
 
-# ========================================================
-# [2] EXPORTAR A PDF ACUMULATIVO
-# ========================================================
+def f1_tokens(respuesta_modelo, respuesta_esperada):
+    pred_tokens = respuesta_modelo.split()
+    ref_tokens = respuesta_esperada.split()
+    all_tokens = list(set(pred_tokens + ref_tokens))
+    y_true = [1 if t in ref_tokens else 0 for t in all_tokens]
+    y_pred = [1 if t in pred_tokens else 0 for t in all_tokens]
+    return f1_score(y_true, y_pred)
 
-def guardar_resultados_pdf_acumulativo(query, precision, recall, similitud, bleu, rouge_l, filename="evaluacion_rag.pdf"):
+# ========================================================
+# Exportar a PDF
+# ========================================================
+def guardar_resultados_pdf(
+    query, precision, recall, mrr, ndcg, semantica,
+    rouge_l, f1, qa_accuracy, topk_answer_correctness,
+    score_human=None, filename="evaluacion_rag.pdf"
+):
     temp_file = "temp_eval.pdf"
     c = canvas.Canvas(temp_file, pagesize=letter)
     width, height = letter
-
     fecha = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # Encabezado de la página
     c.setFont("Helvetica-Bold", 16)
     c.drawString(100, height - 60, "📊 Reporte de Evaluación del Modelo RAG")
     c.setFont("Helvetica", 12)
     c.drawString(80, height - 100, f"🕓 Fecha: {fecha}")
     c.drawString(80, height - 120, f"🔍 Consulta: {query}")
-    c.drawString(80, height - 140, f"📈 Precision: {precision:.2f}")
-    c.drawString(80, height - 160, f"📊 Recall: {recall:.2f}")
-    c.drawString(80, height - 180, f"🤖 Similaridad semántica: {similitud:.2f}")
-    c.drawString(80, height - 200, f"📝 BLEU: {bleu:.2f}")
-    c.drawString(80, height - 220, f"📝 ROUGE-L F1: {rouge_l:.2f}")
-    c.drawString(80, height - 240, "-" * 60)
+    c.drawString(80, height - 140, f"📈 Precision@k: {precision:.2f}")
+    c.drawString(80, height - 160, f"📊 Recall@k: {recall:.2f}")
+    c.drawString(80, height - 180, f"🏆 MRR: {mrr:.2f}")
+    c.drawString(80, height - 200, f"📌 nDCG@k: {ndcg:.2f}")
+    c.drawString(80, height - 220, f"🤖 Similitud semántica: {semantica:.2f}")
+    c.drawString(80, height - 240, f"📝 ROUGE-L F1: {rouge_l:.2f}")
+    c.drawString(80, height - 260, f"🔹 F1 Tokens: {f1:.2f}")
+    c.drawString(80, height - 280, f"🎯 QA Accuracy: {qa_accuracy:.2f}")
+    c.drawString(80, height - 300, f"📌 Top-k Answer Correctness: {topk_answer_correctness}")
 
+    if score_human is not None:
+        c.drawString(80, height - 320, f"🧑 Human Score: {score_human}")
+
+    c.drawString(80, height - 340, "-" * 60)
     c.showPage()
     c.save()
 
-    # Si ya existe el PDF, unirlo con el nuevo
     if os.path.exists(filename):
         writer = PdfWriter()
         for pdf_file in [filename, temp_file]:
@@ -106,18 +119,41 @@ def guardar_resultados_pdf_acumulativo(query, precision, recall, similitud, bleu
     print(f"✅ Resultados guardados en {filename}")
 
 # ========================================================
-# [3] FUNCIÓN GENERAL
+# Evaluación completa
 # ========================================================
+def evaluar_rag_completo_v2(
+    query, resultados_recuperados, documentos_relevantes,
+    respuesta_modelo, respuesta_esperada, k=5, score_human=None
+):
+    # Recuperación
+    precision, recall = precision_recall_at_k(resultados_recuperados, documentos_relevantes, k)
+    mrr = mean_reciprocal_rank(resultados_recuperados, documentos_relevantes)
+    ndcg = ndcg_at_k(resultados_recuperados, documentos_relevantes, k)
 
-def evaluar_y_guardar(query, resultados, respuesta_modelo, respuesta_esperada):
-    """
-    Evalúa el RAG y guarda los resultados automáticamente en un PDF acumulativo.
-    Calcula Precision, Recall, Similitud semántica, BLEU y ROUGE-L F1.
-    """
-    precision, recall = precision_recall_at_k(resultados)
-    similitud = evaluar_similitud_respuesta(respuesta_modelo, respuesta_esperada)
-    bleu = calcular_bleu(respuesta_modelo, respuesta_esperada)
+    # Generación
+    semantica = similitud_semantica(respuesta_modelo, respuesta_esperada)
     rouge_l = calcular_rouge(respuesta_modelo, respuesta_esperada)
+    f1 = f1_tokens(respuesta_modelo, respuesta_esperada)
 
-    guardar_resultados_pdf_acumulativo(query, precision, recall, similitud, bleu, rouge_l)
-    return precision, recall, similitud, bleu, rouge_l
+    # Métricas combinadas
+    qa_accuracy = (recall + f1) / 2
+    topk_answer_correctness = int(any(doc in documentos_relevantes for doc in resultados_recuperados[:k]))
+
+    # Guardar PDF
+    guardar_resultados_pdf(
+        query, precision, recall, mrr, ndcg, semantica,
+        rouge_l, f1, qa_accuracy, topk_answer_correctness, score_human
+    )
+
+    return {
+        "precision": precision,
+        "recall": recall,
+        "mrr": mrr,
+        "ndcg": ndcg,
+        "similitud": semantica,
+        "rouge_l": rouge_l,
+        "f1_tokens": f1,
+        "qa_accuracy": qa_accuracy,
+        "topk_answer_correctness": topk_answer_correctness,
+        "human_score": score_human
+    }
